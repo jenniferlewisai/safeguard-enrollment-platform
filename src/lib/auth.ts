@@ -1,0 +1,6 @@
+import { headers } from "next/headers";
+export type AppRole="admin"|"agent"|"viewer";
+export type CurrentUser={id:string;name:string;email:string;roles:AppRole[]};
+type Claim={typ?:string;val?:string};type Principal={userId?:string;userDetails?:string;claims?:Claim[]};
+export async function getCurrentUser():Promise<CurrentUser|null>{const headerStore=await headers();const encoded=headerStore.get("x-ms-client-principal");if(!encoded){if(process.env.NODE_ENV!=="production"&&process.env.DEMO_AUTH==="true")return{id:"demo",name:"Demo Agent",email:"demo@safeguard.local",roles:["admin"]};return null}try{const principal=JSON.parse(Buffer.from(encoded,"base64").toString("utf8")) as Principal;const claims=principal.claims??[];const roleValues=claims.filter(c=>c.typ?.endsWith("/role")||c.typ==="roles").map(c=>c.val).filter(Boolean) as string[];const roles=roleValues.filter((r):r is AppRole=>["admin","agent","viewer"].includes(r));return{id:principal.userId??"unknown",name:claims.find(c=>c.typ==="name")?.val??principal.userDetails??"Safeguard user",email:principal.userDetails??"",roles:roles.length?roles:["viewer"]}}catch{return null}}
+export function canWrite(user:CurrentUser){return user.roles.includes("admin")||user.roles.includes("agent")}

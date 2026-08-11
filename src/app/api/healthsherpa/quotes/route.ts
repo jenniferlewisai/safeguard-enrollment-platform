@@ -1,0 +1,5 @@
+import { canWrite, getCurrentUser } from "@/lib/auth";
+import { requestHealthSherpaQuote } from "@/lib/healthsherpa";
+import { quoteSchema } from "@/lib/validation";
+export const runtime="nodejs";export const dynamic="force-dynamic";
+export async function POST(request:Request){const user=await getCurrentUser();if(!user)return Response.json({error:"Authentication required"},{status:401});if(!canWrite(user))return Response.json({error:"Insufficient role"},{status:403});let body:unknown;try{body=await request.json()}catch{return Response.json({error:"Invalid JSON"},{status:400})}const parsed=quoteSchema.safeParse(body);if(!parsed.success)return Response.json({error:"Invalid quote request",details:parsed.error.flatten().fieldErrors},{status:422});try{const quote=await requestHealthSherpaQuote(parsed.data);return Response.json({data:quote})}catch(error){console.error("HealthSherpa quote request failed",error instanceof Error?error.message:"Unknown error");return Response.json({error:"Quote service is temporarily unavailable"},{status:502})}}

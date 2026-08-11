@@ -1,0 +1,13 @@
+import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+import { pipeline, recentClients } from "@/lib/demo-data";
+
+export default function DashboardPage() {
+  return <AppShell active="Dashboard">
+    <section className="hero-row"><div><p className="eyebrow">Enrollment command center</p><h1>Good morning, Jennifer.</h1><p className="muted">Your book of business is moving. Here is what needs attention today.</p></div><Link className="button primary" href="/intake">+ New ACA intake</Link></section>
+    <section className="metric-grid" aria-label="Pipeline summary">{pipeline.map(item=><article className="metric-card" key={item.label}><span className={`metric-icon ${item.tone}`}>{item.icon}</span><div><p>{item.label}</p><strong>{item.value}</strong><small>{item.note}</small></div></article>)}</section>
+    <section className="content-grid"><article className="panel"><div className="panel-heading"><div><p className="eyebrow">Pipeline</p><h2>Enrollment activity</h2></div><Link href="/leads">View all</Link></div><div className="pipeline-chart">{[{label:"New leads",value:31,width:88},{label:"Contacted",value:24,width:68},{label:"Quoted",value:18,width:51},{label:"Enrolled",value:11,width:31}].map(row=><div className="chart-row" key={row.label}><span>{row.label}</span><div><i style={{width:`${row.width}%`}} /></div><strong>{row.value}</strong></div>)}</div></article>
+    <article className="panel tasks-panel"><div className="panel-heading"><div><p className="eyebrow">Today</p><h2>Priority tasks</h2></div><span className="count-pill">4</span></div>{[["Call Maria S.","Consent expires today","high"],["Review Daniel R.","Quote ready for review","medium"],["Upload eligibility doc","Ashley P. · due 3:00 PM","low"],["Follow up on payment","Marcus T. · overdue","high"]].map(([title,note,tone])=><div className="task" key={title}><span className={`task-dot ${tone}`} /><div><strong>{title}</strong><p>{note}</p></div><button aria-label={`Complete ${title}`}>✓</button></div>)}</article></section>
+    <section className="panel table-panel"><div className="panel-heading"><div><p className="eyebrow">Clients</p><h2>Recently updated</h2></div><Link href="/clients">Open client list</Link></div><div className="table-wrap"><table><thead><tr><th>Client</th><th>Stage</th><th>County</th><th>Household</th><th>Updated</th></tr></thead><tbody>{recentClients.map(client=><tr key={client.name}><td><strong>{client.name}</strong><small>{client.email}</small></td><td><span className={`status ${client.status.toLowerCase()}`}>{client.status}</span></td><td>{client.county}</td><td>{client.household}</td><td>{client.updated}</td></tr>)}</tbody></table></div></section>
+  </AppShell>;
+}
