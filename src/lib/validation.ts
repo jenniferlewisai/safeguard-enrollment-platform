@@ -1,0 +1,3 @@
+import { z } from "zod";
+export const leadSchema=z.object({firstName:z.string().trim().min(1).max(80),lastName:z.string().trim().min(1).max(80),email:z.email().optional().or(z.literal("")),phone:z.string().trim().min(7).max(30),source:z.string().trim().min(1).max(80),notes:z.string().trim().max(2000).optional()});
+export const quoteSchema=z.object({zipCode:z.string().regex(/^\d{5}$/),countyFips:z.string().regex(/^\d{5}$/).optional(),household:z.array(z.object({age:z.number().int().min(0).max(120),relationship:z.enum(["self","spouse","dependent"]),usesTobacco:z.boolean().default(false)})).min(1).max(20),annualIncome:z.number().nonnegative(),coverageYear:z.number().int().min(new Date().getFullYear()).max(new Date().getFullYear()+1)});

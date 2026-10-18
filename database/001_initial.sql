@@ -1,0 +1,12 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TYPE app_role AS ENUM ('admin','agent','viewer');
+CREATE TYPE lead_stage AS ENUM ('new','contacted','intake','quoted','enrolled','closed');
+CREATE TYPE application_status AS ENUM ('draft','ready_for_quote','quoted','submitted','enrolled','cancelled');
+CREATE TABLE agency_users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE NOT NULL,email text UNIQUE NOT NULL,display_name text NOT NULL,role app_role NOT NULL DEFAULT 'agent',active boolean NOT NULL DEFAULT true,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE leads(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),first_name text NOT NULL,last_name text NOT NULL,email text,phone text NOT NULL,source text NOT NULL,stage lead_stage NOT NULL DEFAULT 'new',notes text,owner_external_id text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX leads_owner_stage_idx ON leads(owner_external_id,stage);
+CREATE TABLE clients(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),lead_id uuid REFERENCES leads(id),first_name text NOT NULL,last_name text NOT NULL,email text,phone text NOT NULL,address_line_1 text NOT NULL,address_line_2 text,city text NOT NULL,state char(2) NOT NULL,postal_code char(5) NOT NULL,county text NOT NULL,owner_external_id text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX clients_owner_name_idx ON clients(owner_external_id,last_name,first_name);
+CREATE TABLE aca_applications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),client_id uuid NOT NULL REFERENCES clients(id),status application_status NOT NULL DEFAULT 'draft',coverage_year integer NOT NULL,household_size integer NOT NULL CHECK(household_size BETWEEN 1 AND 20),annual_income numeric(12,2) NOT NULL CHECK(annual_income>=0),consent_captured_at timestamptz,consent_captured_by text,healthsherpa_quote_id text,last_quoted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE audit_events(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,actor_external_id text,action text NOT NULL,entity_type text NOT NULL,entity_id text,metadata jsonb NOT NULL DEFAULT '{}'::jsonb,occurred_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX audit_events_entity_idx ON audit_events(entity_type,entity_id,occurred_at DESC);
