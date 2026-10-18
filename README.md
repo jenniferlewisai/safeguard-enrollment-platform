@@ -24,14 +24,42 @@ Copy `.env.example` to `.env.local` for local development. Never commit real cre
 
 Apply `database/001_initial.sql` to the target PostgreSQL database before using the API routes.
 
+## Intake storage and access
+
+After the initial schema, apply `database/002_intake.sql` to an **isolated test database first**. This additive migration stores partial household intakes alongside their leads; it does not alter existing clients or applications. No migration runs automatically on startup.
+
+- Agents can create leads and save/resume only their own intakes. Administrators can access all leads and intakes. Viewers can read their own lead summaries and cannot create or edit records or open household intake details.
+- Both draft saving and submission require applicant consent. The database records the original consent timestamp and agent identity. Each successful save writes an audit event without applicant details.
+- Drafts may omit applicant fields. Submission requires the complete form and changes intake status to `ready_for_quote`. Submitted intakes are read-only. This step does not request a quote, submit an enrollment, or create a client/application record.
+- Saves update a single lead and intake transactionally. Versions reject stale updates; a stable lead ID prevents duplicate first-save retries. If a save response is lost, use the saved-intake link or Leads to recover the record before retrying edits.
+- The dashboard counts all accessible leads. Leads shows the latest 100 accessible records, with search and stage filters applied to that set. Storage failures show errors rather than sample records.
+
+The app trusts Azure App Service Authentication headers. Production must require Entra authentication, restrict accepted tenants/audiences and app-role assignments, and prevent any path to the app that bypasses App Service Authentication. Identity handling follows [Microsoft's App Service identity documentation](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-user-identities). `agency_users.active` is not an additional authorization source; revoke access in Entra. Records previously written with the legacy `unknown` owner require an explicit administrator-reviewed ownership migration; they are never exposed to ordinary agents by default.
+
+For authorized Azure testing, configure a separate PostgreSQL database and apply both migrations there, then test with separate Entra admin, agent, and viewer accounts and fictional households. Check agent isolation, draft resumption, consent/audit records, submission, and storage failure behavior before considering production. No production database, enrollment credential, or HealthSherpa request is required for the tests below. This integration does not connect or replace the separate open enrollment dashboard.
+
+Branch pushes run validation and package the app; they do not deploy it. The existing Azure deployment job now requires a manual workflow dispatch with `deploy_to_azure` explicitly enabled. Do not enable it until the target app/database and authorized test plan are confirmed. No Azure settings or credentials are modified by this change.
+
 ## Local verification
 
 ```bash
 npm ci
 DEMO_AUTH=true npm run dev
 npm run lint
+npm test
 npm run build
 ```
+
+Browser verification uses an ephemeral PostgreSQL-compatible PGlite database over a loopback-only wire server. It overrides the database URL, disables demo authentication and clears HealthSherpa credentials in the test child process. Identity headers are fictional fixtures for the local test server, not a substitute for authorized Entra testing on Azure.
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+Alternatively set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome browser. The test server uses ports 3107 and 55439 and discards its in-memory records when it exits.
+
+Validation uses Node 24. The framework is patched to Next.js 16.3.8. At implementation time `npm audit --omit=dev` reported no production vulnerabilities; full audit still reports five high-severity findings in the development-only `eslint-config-next` → `fast-glob` → `micromatch` → `braces` chain. The suggested automated fix downgrades the framework lint configuration to version 14, so it was not applied.
 
 ## Azure App Service
 

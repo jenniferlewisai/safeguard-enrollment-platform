@@ -1,13 +1,14 @@
-import Link from "next/link";
-import { AppShell } from "@/components/app-shell";
-import { pipeline, recentClients } from "@/lib/demo-data";
-
-export default function DashboardPage() {
-  return <AppShell active="Dashboard">
-    <section className="hero-row"><div><p className="eyebrow">Enrollment command center</p><h1>Good morning, Jennifer.</h1><p className="muted">Your book of business is moving. Here is what needs attention today.</p></div><Link className="button primary" href="/intake">+ New ACA intake</Link></section>
-    <section className="metric-grid" aria-label="Pipeline summary">{pipeline.map(item=><article className="metric-card" key={item.label}><span className={`metric-icon ${item.tone}`}>{item.icon}</span><div><p>{item.label}</p><strong>{item.value}</strong><small>{item.note}</small></div></article>)}</section>
-    <section className="content-grid"><article className="panel"><div className="panel-heading"><div><p className="eyebrow">Pipeline</p><h2>Enrollment activity</h2></div><Link href="/leads">View all</Link></div><div className="pipeline-chart">{[{label:"New leads",value:31,width:88},{label:"Contacted",value:24,width:68},{label:"Quoted",value:18,width:51},{label:"Enrolled",value:11,width:31}].map(row=><div className="chart-row" key={row.label}><span>{row.label}</span><div><i style={{width:`${row.width}%`}} /></div><strong>{row.value}</strong></div>)}</div></article>
-    <article className="panel tasks-panel"><div className="panel-heading"><div><p className="eyebrow">Today</p><h2>Priority tasks</h2></div><span className="count-pill">4</span></div>{[["Call Maria S.","Consent expires today","high"],["Review Daniel R.","Quote ready for review","medium"],["Upload eligibility doc","Ashley P. · due 3:00 PM","low"],["Follow up on payment","Marcus T. · overdue","high"]].map(([title,note,tone])=><div className="task" key={title}><span className={`task-dot ${tone}`} /><div><strong>{title}</strong><p>{note}</p></div><button aria-label={`Complete ${title}`}>✓</button></div>)}</article></section>
-    <section className="panel table-panel"><div className="panel-heading"><div><p className="eyebrow">Clients</p><h2>Recently updated</h2></div><Link href="/clients">Open client list</Link></div><div className="table-wrap"><table><thead><tr><th>Client</th><th>Stage</th><th>County</th><th>Household</th><th>Updated</th></tr></thead><tbody>{recentClients.map(client=><tr key={client.name}><td><strong>{client.name}</strong><small>{client.email}</small></td><td><span className={`status ${client.status.toLowerCase()}`}>{client.status}</span></td><td>{client.county}</td><td>{client.household}</td><td>{client.updated}</td></tr>)}</tbody></table></div></section>
-  </AppShell>;
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { AppShell } from '@/components/app-shell';
+import { LeadTable } from '@/components/lead-table';
+import { getCurrentUser, canWrite } from '@/lib/auth';
+import { listLeads, leadCounts } from '@/lib/leads';
+export const dynamic='force-dynamic';
+export default async function DashboardPage() {
+  const user=await getCurrentUser();if(!user) redirect('/login');
+  let leads,counts;
+  try {[leads,counts]=await Promise.all([listLeads(user),leadCounts(user)])} catch {return <AppShell active="Dashboard"><h1>Enrollment dashboard</h1><p role="alert">Lead storage is unavailable. Please retry later.</p></AppShell>}
+  const total=counts.reduce((sum,row)=>sum+Number(row.count),0);
+  return <AppShell active="Dashboard"><section className="hero-row"><div><p className="eyebrow">Enrollment command center</p><h1>Welcome, {user.name}.</h1><p className="muted">Your accessible lead pipeline, including saved drafts.</p></div>{canWrite(user)?<Link className="button primary" href="/intake">+ New ACA intake</Link>:null}</section><section className="metric-grid" aria-label="Pipeline summary">{[{stage:'All leads',count:String(total)},...counts].map(row=><article className="metric-card" key={row.stage}><div><p>{row.stage}</p><strong>{row.count}</strong></div></article>)}</section><section className="panel table-panel"><div className="panel-heading"><h2>Recently updated leads</h2><Link href="/leads">View all</Link></div><LeadTable leads={leads.slice(0,10)} canEdit={canWrite(user)}/></section></AppShell>;
 }
