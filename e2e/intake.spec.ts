@@ -88,3 +88,25 @@ test('admin links an existing case, records consent, and sees quote results and 
   await expect(workspace.getByRole('button',{name:'Request quotes'})).toBeDisabled();
   await expect(workspace.getByRole('table')).toHaveCount(0);
 });
+
+test('HTTP enrollment workflow persists one linked case and enforces role and release gates',async({request})=>{
+  const agentHeaders={'x-ms-client-principal':principal('fictional-http-agent','agent')};
+  const adminHeaders={'x-ms-client-principal':principal('fictional-http-admin','admin')};
+  const otherHeaders={'x-ms-client-principal':principal('fictional-other-http-agent','agent')};
+  const id=randomUUID();
+  expect((await request.post('/api/intakes',{headers:agentHeaders,data:{id,version:0,intent:'submit',data:{...emptyIntake(),firstName:'Fictional HTTP',lastName:'Applicant',dob:'1990-01-01',phone:'2025550100',email:'http@example.test',address:'123 Fictional Lane',county:'Test',zipCode:'20001',householdSize:1,income:42000,coverageYear:2027}}})).status()).toBe(201);
+  const initialize=()=>request.post('/api/enrollment-cases',{headers:agentHeaders,data:{action:'initialize',leadId:id}});
+  const first=await initialize();expect(first.status()).toBe(200);
+  const c=(await first.json()).data;
+  expect((await (await initialize()).json()).data.id).toBe(c.id);
+  expect((await request.post('/api/enrollment-cases',{headers:otherHeaders,data:{action:'initialize',leadId:id}})).status()).toBe(404);
+  const grant=await request.post('/api/enrollment-cases',{headers:agentHeaders,data:{action:'consent',caseId:c.id,status:'granted',evidenceReference:'fictional-http-consent'}});expect(grant.status()).toBe(200);
+  const linkage={action:'link',caseId:c.id,hubClientId:randomUUID(),hubOfficeId:randomUUID(),reviewConfirmed:true};
+  expect((await request.post('/api/enrollment-cases',{headers:agentHeaders,data:linkage})).status()).toBe(403);
+  expect((await request.post('/api/enrollment-cases',{headers:adminHeaders,data:linkage})).status()).toBe(200);
+  const resumed=(await (await initialize()).json()).data;
+  expect(resumed.hub_client_id).toBe(linkage.hubClientId);expect(resumed.consent_status).toBe('granted');
+  expect((await request.post('/api/healthsherpa/sessions',{headers:agentHeaders,data:{caseId:c.id,countyFips:'11001'}})).status()).toBe(503);
+  expect((await request.post('/api/healthsherpa/policy-status',{headers:agentHeaders,data:{caseId:c.id}})).status()).toBe(503);
+  expect((await request.get('/api/hub/enrollments?year=2027')).status()).toBe(503);
+});

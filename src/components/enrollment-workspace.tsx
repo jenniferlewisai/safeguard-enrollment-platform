@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import type { PolicySnapshot } from '@/lib/policy-status';
 import { safeShoppingUrl } from '@/lib/enrollment-link';
 
 type County={fips_code:string;name:string;state:string};
@@ -14,6 +15,7 @@ async function api(path:string,body?:unknown) {
 }
 export function EnrollmentWorkspace({leadId,admin}:{leadId:string;admin:boolean}) {
   const [record,setRecord]=useState<Case|null>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const [snapshot,setSnapshot]=useState<PolicySnapshot|null>(null);
   const [evidence,setEvidence]=useState(''),[counties,setCounties]=useState<County[]>([]),[fips,setFips]=useState('');
   const [effective,setEffective]=useState(''),[plans,setPlans]=useState<Plan[]>([]),[shoppingUrl,setShoppingUrl]=useState('');
   const [hubClient,setHubClient]=useState(''),[hubOffice,setHubOffice]=useState(''),[legacy,setLegacy]=useState(''),[reviewed,setReviewed]=useState(false);
@@ -39,7 +41,7 @@ export function EnrollmentWorkspace({leadId,admin}:{leadId:string;admin:boolean}
         <div className="form-actions">
           {(['granted','revoked'] as const).map(status=><button className="button secondary" type="button" key={status} disabled={evidence.trim().length<3} onClick={()=>run(async()=>{
             await api('/api/enrollment-cases',{action:'consent',caseId:record.id,status,evidenceReference:evidence});
-            setRecord({...record,consent_status:status});setPlans([]);setShoppingUrl('');setCounties([]);setFips('');setMessage(status==='granted'?'Assistance consent recorded.':'Consent revoked. Further API work is blocked.');
+            setRecord({...record,consent_status:status});setSnapshot(null);setPlans([]);setShoppingUrl('');setCounties([]);setFips('');setMessage(status==='granted'?'Assistance consent recorded.':'Consent revoked. Further API work is blocked.');
           })}>{status==='granted'?'Record granted consent':'Record revocation'}</button>)}
         </div>
       </fieldset>
@@ -86,6 +88,17 @@ export function EnrollmentWorkspace({leadId,admin}:{leadId:string;admin:boolean}
           setShoppingUrl(safeShoppingUrl(result.data.shoppingUrl));
         })}>Create or resume HealthSherpa handoff</button>
         {shoppingUrl&&<p><a href={shoppingUrl} target="_blank" rel="noreferrer noopener">Continue securely in HealthSherpa</a></p>}
+        <h3>Provider-reported policy status</h3>
+        <p>Check outcomes for this exact case and coverage year. Missing data means unconfirmed; it does not mean coverage failed. The local lead stage will not change automatically.</p>
+        <button className="button secondary" type="button" disabled={!record.hub_client_id} onClick={()=>run(async()=>{
+          setSnapshot(null);
+          const result=await api('/api/healthsherpa/policy-status',{caseId:record.id});setSnapshot(result.data);
+        })}>Check HealthSherpa policy status</button>
+        {snapshot&&<div><p>Provider checked: {new Date(snapshot.checked_at).toLocaleString()}</p>
+          {snapshot.policies.length===0?<p>No policy outcome is available yet.</p>:<ul>{snapshot.policies.map((policy,index)=><li key={index}>
+            Status: {policy.status??'Unreported'} · Payment: {policy.payment_status??'Unreported'} · Effective: {policy.effective_date??'Unreported'} · Paid through: {policy.paid_through_date??'Unreported'}
+          </li>)}</ul>}
+        </div>}
       </fieldset>
     </>}
     {(busy||message)&&<p role="status" aria-live="polite">{busy?'Working…':message}</p>}

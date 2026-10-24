@@ -4,10 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { beforeAll,afterAll,beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 const state=vi.hoisted(()=>({principal:null as string|null,db:null as unknown as PGlite,failAction:''}));
 vi.mock('next/headers',()=>({headers:async()=>new Headers(state.principal?{'x-ms-client-principal':state.principal}:{})}));
-vi.mock('@/lib/db',()=>({transaction:async(work:(client:unknown)=>Promise<unknown>)=>state.db.transaction(async tx=>work({query:async(sql:string,params:unknown[]=[])=>{
+vi.mock('@/lib/db',()=>({query:async(sql:string,params:unknown[]=[])=>{const r=await state.db.query(sql,params);return {...r,rowCount:r.rows.length||r.affectedRows||0}},transaction:async(work:(client:unknown)=>Promise<unknown>)=>state.db.transaction(async tx=>work({query:async(sql:string,params:unknown[]=[])=>{
   if(state.failAction && sql.includes('INSERT INTO audit_events') && params[1]===state.failAction) throw new Error('fictional audit failure');
   const r=await tx.query(sql,params);return {...r,rowCount:r.rows.length||r.affectedRows||0};
 }}))}));
+import { POST as policyStatus } from '@/app/api/healthsherpa/policy-status/route';
+import { GET as hubEnrollments } from '@/app/api/hub/enrollments/route';
 import { POST as intake } from '@/app/api/intakes/route';
 import { POST as cases } from '@/app/api/enrollment-cases/route';
 import { POST as quotes } from '@/app/api/healthsherpa/quotes/route';
@@ -37,11 +39,12 @@ const quoteBody=(id:string)=>({caseId:id,countyFips:'11001',effectiveDate:'2027-
 const fetchMock=vi.fn();
 beforeAll(async()=>{
   state.db=new PGlite();
-  for(const file of ['001_initial.sql','002_intake.sql','003_enrollment_workflow.sql']) await state.db.exec(readFileSync(`database/${file}`,'utf8').replace('CREATE EXTENSION IF NOT EXISTS pgcrypto;',''));
+  for(const file of ['001_initial.sql','002_intake.sql','003_enrollment_workflow.sql','004_policy_readback.sql']) await state.db.exec(readFileSync(`database/${file}`,'utf8').replace('CREATE EXTENSION IF NOT EXISTS pgcrypto;',''));
 },30000);
 afterAll(async()=>{await state.db.close()});
 beforeEach(async()=>{
   state.failAction='';await state.db.exec('TRUNCATE leads,audit_events CASCADE');signIn();
+  vi.stubEnv('HEALTHSHERPA_POLICY_STATUS_ENABLED','false');vi.stubEnv('HUB_ENROLLMENT_READ_ENABLED','false');
   vi.stubEnv('HEALTHSHERPA_WORKFLOW_ENABLED','true');vi.stubEnv('HEALTHSHERPA_ENROLLMENT_SESSIONS_ENABLED','true');
   vi.stubEnv('HEALTHSHERPA_AGENT_EXTERNAL_ID',agent);vi.stubEnv('HEALTHSHERPA_API_KEY','fictional-test-key');
   vi.stubEnv('HEALTHSHERPA_API_BASE_URL','https://staging-api.one.healthsherpa.com');
@@ -143,5 +146,86 @@ describe('one consented enrollment case per linked client and year',()=>{
   it('accepts only HTTPS links on HealthSherpa domains',()=>{
     for(const url of ['http://healthsherpa.com/a','https://healthsherpa.com.evil.example/a','https://evilhealthsherpa.com/a','https://user@healthsherpa.com/a','javascript:alert(1)']) expect(()=>safeShoppingUrl(url)).toThrow();
     expect(safeShoppingUrl('https://www.healthsherpa.com/a')).toBe('https://www.healthsherpa.com/a');
+  });
+});
+
+
+describe('provider readback and scoped Hub projection',()=>{
+  async function handoff() {
+    const c=await seed();await grant(c.id);await link(c.id);
+    expect((await sessions(req({caseId:c.id,countyFips:'11001'}))).status).toBe(200);
+    return c;
+  }
+  function provider(c:{id:string},applications?:unknown[]) {
+    vi.stubEnv('HEALTHSHERPA_POLICY_STATUS_ENABLED','true');
+    fetchMock.mockImplementation(async(url:string)=>{
+      if(url.includes('/policy-status/applications?')) return Response.json({applications:applications??[{confirmation_id:'fictional-confirmation',external_id:c.id,plan_year:2027}],pagination:{limit:100,offset:0}});
+      if(url.includes('/policy-status/applications/fictional-confirmation?'))return Response.json({policy_statuses:[{status:'active',payment_status:'paid',effective_date:'2027-01-01',updated_at:'2027-01-01T00:00:00Z',confirmation_id:'must-not-retain',current_balance_cents:999,first_name:'must-not-retain'}]});
+      throw new Error('Unexpected provider request');
+    });
+  }
+  it('requires policy approval and the exact linked agent, then retains only provider observations',async()=>{
+    const c=await handoff();
+    expect((await policyStatus(req({caseId:c.id}))).status).toBe(503);
+    provider(c);signIn('fictional-admin','admin');expect((await policyStatus(req({caseId:c.id}))).status).toBe(403);signIn();
+    const r=await policyStatus(req({caseId:c.id}));expect(r.status).toBe(200);
+    expect(r.headers.get('cache-control')).toContain('no-store');
+    expect((await r.json()).data.policies).toEqual([{status:'active',payment_status:'paid',effective_date:'2027-01-01',updated_at:'2027-01-01T00:00:00Z'}]);
+    expect((await state.db.query<{stage:string}>('SELECT stage FROM leads')).rows[0].stage).toBe('intake');
+    const stored=JSON.stringify((await state.db.query('SELECT * FROM healthsherpa_policy_snapshots')).rows);
+    expect(stored).not.toContain('fictional-confirmation');expect(stored).not.toContain('must-not-retain');expect(stored).not.toContain('999');
+  });
+  it('does not invent outcomes for absent, conflicting, wrong-year or foreign-case correlations',async()=>{
+    const c=await handoff();
+    for(const applications of [[],[{confirmation_id:'other',external_id:randomUUID(),plan_year:2027}],[{confirmation_id:'prior-year',external_id:c.id,plan_year:2026}],[{confirmation_id:'a',external_id:c.id,plan_year:2027},{confirmation_id:'b',external_id:c.id,plan_year:2027}]]) {
+      provider(c,applications);expect((await policyStatus(req({caseId:c.id}))).status).toBe(503);
+    }
+    expect((await state.db.query('SELECT * FROM healthsherpa_policy_snapshots')).rows).toHaveLength(0);
+    expect((await policyStatus(req({caseId:c.id,confirmationId:'injected'}))).status).toBe(422);
+  });
+  it('withholds a provider readback if consent changes before persistence',async()=>{
+    const c=await handoff();provider(c);
+    const original=fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async(url:string)=>{
+      if(url.includes('/applications/fictional-confirmation?'))await grant(c.id,'revoked');
+      return original(url);
+    });
+    expect((await policyStatus(req({caseId:c.id}))).status).toBe(409);
+    expect((await state.db.query('SELECT * FROM healthsherpa_policy_snapshots')).rows).toHaveLength(0);
+  });
+  const hubUser='11111111-1111-4111-8111-111111111111';
+  function hubToken(overrides:Record<string,unknown>={}) {
+    return 'eyJhbGciOiJIUzI1NiJ9.'+Buffer.from(JSON.stringify({sub:hubUser,iss:'https://fictional.supabase.co/auth/v1',aud:'authenticated',aal:'aal2',exp:Math.floor(Date.now()/1000)+600,...overrides})).toString('base64url')+'.fictional';
+  }
+  function hubRequest(token=hubToken(),extra='') {return new Request('http://localhost/api/hub/enrollments?year=2027'+extra,{headers:{Authorization:'Bearer '+token}})}
+  function hubAuth(officeId:string,profileOverrides:Record<string,unknown>={}) {
+    vi.stubEnv('HUB_ENROLLMENT_READ_ENABLED','true');vi.stubEnv('HUB_SUPABASE_URL','https://fictional.supabase.co');vi.stubEnv('HUB_SUPABASE_PUBLISHABLE_KEY','sb_publishable_fictional');
+    fetchMock.mockImplementation(async(url:string)=>{
+      if(url.endsWith('/auth/v1/user'))return Response.json({id:hubUser,is_anonymous:false});
+      if(url.includes('/rest/v1/profiles?'))return Response.json([{user_id:hubUser,office_id:officeId,role:'office_manager',active:true,...profileOverrides}]);
+      throw new Error('Unexpected auth request');
+    });
+  }
+  it('reads only the verified Hub office and never returns household details or enrollment URLs',async()=>{
+    const c=await handoff();provider(c);expect((await policyStatus(req({caseId:c.id}))).status).toBe(200);
+    const other=await seed();await grant(other.id);await link(other.id);
+    const office=(await state.db.query<{hub_office_id:string}>('SELECT hub_office_id FROM enrollment_cases WHERE id=$1',[c.id])).rows[0].hub_office_id;
+    hubAuth(office);
+    const r=await hubEnrollments(hubRequest(undefined,'&officeId='+randomUUID()));expect(r.status).toBe(200);
+    const body=await r.json();expect(body.data).toHaveLength(1);expect(body.data[0].id).toBe(c.id);expect(body.data[0].id).not.toBe(other.id);
+    expect(body.data[0].policies[0].status).toBe('active');
+    const serialized=JSON.stringify(body);for(const value of ['shopping_url','owner_external_id','first_name','email','income','fictional-confirmation'])expect(serialized).not.toContain(value);
+    await grant(c.id,'revoked');
+    const revoked=await hubEnrollments(hubRequest());expect((await revoked.json()).data[0].policies).toBeNull();
+  });
+  it('rejects expired/MFA-less tokens, inactive/non-manager profiles and unverified signatures',async()=>{
+    const office=randomUUID();hubAuth(office);
+    expect((await hubEnrollments(hubRequest(hubToken({aal:'aal1'})))).status).toBe(401);
+    expect((await hubEnrollments(hubRequest(hubToken({exp:1})))).status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+    hubAuth(office,{active:false});expect((await hubEnrollments(hubRequest())).status).toBe(403);
+    hubAuth(office,{role:'preparer'});expect((await hubEnrollments(hubRequest(hubToken({user_metadata:{role:'owner'}})))).status).toBe(403);
+    hubAuth(office);fetchMock.mockResolvedValueOnce(Response.json({error:'bad signature'},{status:401}));
+    expect((await hubEnrollments(hubRequest())).status).toBe(401);
   });
 });

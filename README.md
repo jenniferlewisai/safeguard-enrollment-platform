@@ -75,3 +75,5 @@ The application reads `HEALTHSHERPA_API_KEY` only in the Node.js server runtime.
 See [ENROLLMENT_WORKFLOW.md](ENROLLMENT_WORKFLOW.md) for record authority, Base44/Hub/Azure field and permission mapping, duplicate risks, and the staged release plan. Migration `003_enrollment_workflow.sql` is additive and must be applied only to an isolated database first.
 
 The saved-intake page now provides county lookup, documented assistance consent, explicit applicant quote inputs, admin-reviewed legacy record links, and a guarded HealthSherpa agent handoff. API keys remain server-side. A handoff is not an application submission; final Marketplace work takes place in HealthSherpa. Neither feature gate is enabled by this code change. No automatic imports, Hub sync, policy-status polling or production migration is included.
+
+The follow-up adds approval-gated provider-status observations and a read-only Hub endpoint. See the follow-up section of `ENROLLMENT_WORKFLOW.md` for migration `004_policy_readback.sql`, scoped Hub authentication, minimal retention, and Azure route-access requirements. All live gates remain disabled.

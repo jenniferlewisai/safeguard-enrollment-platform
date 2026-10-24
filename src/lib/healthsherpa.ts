@@ -1,3 +1,4 @@
+import { policyObservationSchema } from './policy-status';
 import { safeShoppingUrl } from './enrollment-link';
 export { safeShoppingUrl } from './enrollment-link';
 import { z } from 'zod';
@@ -50,4 +51,31 @@ export async function requestHealthSherpaSession(payload:unknown,key:string,case
   const response=z.object({external_id:z.string(),links:z.object({shopping_url:z.string()})}).parse(await call('/v1/enrollment-sessions',payload,key));
   if(response.external_id!==caseId) throw new Error('Enrollment correlation mismatch');
   return safeShoppingUrl(response.links.shopping_url);
+}
+
+// Provider list supports no external_id filter. Scan bounded metadata pages server-side;
+// return only one exact case/year match. Never expose the linked agent's book to the caller.
+export async function readHealthSherpaPolicies(caseId:string,year:number) {
+  const listSchema=z.object({applications:z.array(z.object({
+    confirmation_id:z.string().min(1).max(200).optional(),external_id:z.string().nullable().optional(),plan_year:z.number().int().optional(),
+  })),pagination:z.object({limit:z.number().int(),offset:z.number().int()})});
+  const matches:string[]=[];
+  let complete=false;
+  for(let page=0;page<10;page++) {
+    const offset=page*100;
+    const result=listSchema.parse(await call(`/v1/policy-status/applications?exchange=on_exchange&plan_year=${year}&limit=100&offset=${offset}`));
+    if(result.pagination.offset!==offset||result.pagination.limit!==100||result.applications.length>100) throw new Error('Invalid provider pagination');
+    for(const application of result.applications) {
+      if(application.external_id===caseId && application.plan_year===year) {
+        if(!application.confirmation_id) throw new Error('Missing provider correlation');
+        matches.push(application.confirmation_id);
+      }
+    }
+    if(matches.length>1) throw new Error('Multiple provider applications require reconciliation');
+    if(result.applications.length<100) {complete=true;break}
+  }
+  if(!complete||matches.length!==1) throw new Error('Provider application cannot be correlated safely');
+  const result=z.object({policy_statuses:z.array(policyObservationSchema).max(100)}).parse(
+    await call(`/v1/policy-status/applications/${encodeURIComponent(matches[0])}?exchange=on_exchange&plan_year=${year}`));
+  return result.policy_statuses;
 }
