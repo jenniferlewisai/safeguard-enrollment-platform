@@ -1,9 +1,11 @@
 'use client';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useRef, useState, type FormEvent } from 'react';
 import { emptyIntake, type SavedIntake } from '@/lib/intake';
 
 export function IntakeForm({id,saved}:{id:string;saved?:SavedIntake}) {
+  const router=useRouter();
   const data=saved?.data??emptyIntake();
   const [version,setVersion]=useState(saved?.version??0);
   const [submitted,setSubmitted]=useState(saved?.status==='ready_for_quote');
@@ -27,6 +29,7 @@ export function IntakeForm({id,saved}:{id:string;saved?:SavedIntake}) {
       if(!response.ok) {setConflict(response.status===409);setErrors(result.details??[result.error??'Unable to save. Please retry.']);return}
       setVersion(result.data.version);setSubmitted(result.data.status==='ready_for_quote');
       window.history.replaceState(null,'',`/intake?id=${id}`);
+      if(result.data.status==='ready_for_quote') router.refresh();
       setMessage(intent==='draft'?'Draft saved. You can resume it from Leads.':'Intake saved and ready for quote preparation. No quote or enrollment has been submitted.');
     } catch {setErrors(['Unable to reach intake storage. Your entries remain on this page. Please retry.'])}
     finally {saving.current=false;setBusy(false)}
