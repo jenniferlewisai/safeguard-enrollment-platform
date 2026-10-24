@@ -52,3 +52,39 @@ test('browser role restrictions and unauthenticated API requests',async({page,re
   await page.setExtraHTTPHeaders({'x-ms-client-principal':principal('fictional-admin','admin')});
   await page.goto('/leads');await expect(page.getByRole('table')).toContainText('Fictional Role Fixture');
 });
+
+test('admin links an existing case, records consent, and sees quote results and the disabled handoff boundary',async({page})=>{
+  const identity=principal('fictional-workflow-admin','admin');
+  await page.setExtraHTTPHeaders({'x-ms-client-principal':identity});
+  const id=randomUUID();
+  expect((await page.request.post('/api/intakes',{data:{id,version:0,intent:'submit',data:{...emptyIntake(),firstName:'Fictional Workflow',lastName:'Applicant',dob:'1990-01-01',phone:'2025550100',email:'workflow@example.test',address:'123 Fictional Lane',county:'Test',zipCode:'20001',householdSize:1,income:42000,coverageYear:2027}}})).status()).toBe(201);
+  await page.goto(`/intake?id=${id}`);
+  const workspace=page.getByRole('region',{name:'HealthSherpa enrollment workspace'});
+  await workspace.getByRole('button',{name:'Open or resume enrollment case'}).click();
+  await expect(workspace).toContainText('Awaiting administrator reconciliation');
+  await workspace.getByLabel('Consent evidence reference').fill('fictional-consent-document');
+  await workspace.getByRole('button',{name:'Record granted consent'}).click();
+  await expect(workspace).toContainText('Assistance consent: granted');
+  await workspace.getByLabel('Hub client ID',{exact:true}).fill(randomUUID());
+  await workspace.getByLabel('Hub office ID',{exact:true}).fill(randomUUID());
+  await workspace.getByLabel('I verified the household').check();
+  await workspace.getByRole('button',{name:'Link reviewed records'}).click();
+  await expect(workspace).toContainText('Hub client: Linked');
+  // Browser response fixtures only; server contract/ownership/DB boundaries are covered in Vitest.
+  await page.route('**/api/healthsherpa/counties?*',route=>route.fulfill({json:{data:[{fips_code:'11001',name:'Fictional County',state:'DC'}]}}));
+  await page.route('**/api/healthsherpa/quotes',route=>route.fulfill({json:{data:{plans:[{plan_id:'fictional-plan',name:'Fictional Silver',pricing:{net_premium:123.45}}],meta:{result_count:1}}}}));
+  await workspace.getByRole('button',{name:'Look up counties for saved ZIP'}).click();
+  await workspace.getByLabel('County',{exact:true}).selectOption('11001');
+  await workspace.getByLabel('Requested effective date').fill('2027-01-01');
+  await workspace.getByLabel('Applicant 1 age').fill('36');
+  await workspace.getByLabel('Tobacco use').selectOption('false');
+  await workspace.getByRole('button',{name:'Request quotes'}).click();
+  await expect(workspace.getByRole('table')).toContainText('Fictional Silver');
+  await expect(workspace.getByRole('table')).toContainText('$123.45');
+  await workspace.getByRole('button',{name:'Create or resume HealthSherpa handoff'}).click();
+  await expect(workspace.getByRole('status')).toContainText('approval and OAuth verification required');
+  await workspace.getByRole('button',{name:'Record revocation'}).click();
+  await expect(workspace).toContainText('Assistance consent: revoked');
+  await expect(workspace.getByRole('button',{name:'Request quotes'})).toBeDisabled();
+  await expect(workspace.getByRole('table')).toHaveCount(0);
+});

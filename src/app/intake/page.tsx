@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { redirect, notFound } from 'next/navigation';
 import { z } from 'zod';
 import { AppShell } from '@/components/app-shell';
+import { EnrollmentWorkspace } from '@/components/enrollment-workspace';
 import { IntakeForm } from '@/components/intake-form';
 import { canWrite, getCurrentUser } from '@/lib/auth';
 import { getIntake } from '@/lib/leads';
@@ -15,5 +16,5 @@ export default async function IntakePage({searchParams}:{searchParams:Promise<{i
   let saved;
   try {saved=id?await getIntake(user,id):undefined} catch {return <AppShell active="ACA Intake"><p role="alert">Intake storage is unavailable. Please retry later.</p></AppShell>}
   if(id&&!saved) notFound();
-  return <AppShell active="ACA Intake"><div className="page-title"><p className="eyebrow">Application intake</p><h1>ACA household intake</h1><p className="muted">Save a partial draft or complete the intake for quote preparation.</p></div><IntakeForm id={id??randomUUID()} saved={saved}/></AppShell>;
+  return <AppShell active="ACA Intake"><div className="page-title"><p className="eyebrow">Application intake</p><h1>ACA household intake</h1><p className="muted">Save a partial draft or complete the intake for quote preparation.</p></div><IntakeForm id={id??randomUUID()} saved={saved}/>{saved?.status==='ready_for_quote'&&id&&<EnrollmentWorkspace leadId={id} admin={user.roles.includes('admin')}/>}</AppShell>;
 }

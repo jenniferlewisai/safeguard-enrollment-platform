@@ -19,7 +19,10 @@ Copy `.env.example` to `.env.local` for local development. Never commit real cre
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `HEALTHSHERPA_API_KEY` | HealthSherpa credential; configured as an App Service Key Vault reference |
-| `HEALTHSHERPA_API_BASE_URL` | Approved HealthSherpa API base URL |
+| `HEALTHSHERPA_API_BASE_URL` | Approved HealthSherpa ONE origin; staging example in `.env.example` |
+| `HEALTHSHERPA_WORKFLOW_ENABLED` | Default false; isolated testing/reconciliation release gate |
+| `HEALTHSHERPA_ENROLLMENT_SESSIONS_ENABLED` | Default false; provider approval and linked OAuth required |
+| `HEALTHSHERPA_AGENT_EXTERNAL_ID` | Exact Entra identity linked to the configured HealthSherpa key |
 | `DEMO_AUTH` | Set to `true` only for local development without App Service Authentication |
 
 Apply `database/001_initial.sql` to the target PostgreSQL database before using the API routes.
@@ -66,3 +69,9 @@ Validation uses Node 24. The framework is patched to Next.js 16.3.8. At implemen
 Use Node 24 (or the current supported LTS), set the startup command to `npm run start`, and configure the health check path as `/api/health`. App Service Authentication should require Microsoft Entra ID authentication and pass the `X-MS-CLIENT-PRINCIPAL` header to the application.
 
 The application reads `HEALTHSHERPA_API_KEY` only in the Node.js server runtime. Do not rename it with a `NEXT_PUBLIC_` prefix.
+
+## Unified ACA workflow (review branch)
+
+See [ENROLLMENT_WORKFLOW.md](ENROLLMENT_WORKFLOW.md) for record authority, Base44/Hub/Azure field and permission mapping, duplicate risks, and the staged release plan. Migration `003_enrollment_workflow.sql` is additive and must be applied only to an isolated database first.
+
+The saved-intake page now provides county lookup, documented assistance consent, explicit applicant quote inputs, admin-reviewed legacy record links, and a guarded HealthSherpa agent handoff. API keys remain server-side. A handoff is not an application submission; final Marketplace work takes place in HealthSherpa. Neither feature gate is enabled by this code change. No automatic imports, Hub sync, policy-status polling or production migration is included.
